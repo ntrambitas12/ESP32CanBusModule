@@ -15,7 +15,9 @@ class wifiAdapter {
 private:
     TaskHandle_t fetchCommandHandle = NULL;
     TaskHandle_t sendStatusHandle = NULL;
-     // These fields are static so that the helper tasks can access them.
+    static TaskHandle_t connectToWifiTaskHandle;// Handle to dynamically control wifi connection loop
+    static StaticSemaphore_t connectionSemaphoreBuffer;
+    // These fields are static so that the helper tasks can access them.
     // There shouldn't be any issues at runtime but these need to be used with caution
     static unsigned long wifiConnectionstartTime;
     static char* serverAddress;
@@ -27,10 +29,10 @@ private:
     static void sendStatus(void* params);
     static std::mutex commandsQueueMutex;
     static std::mutex statusQueueMutex;
-    static TaskHandle_t connectToWifiTaskHandle; // Handle to dynamically control wifi connection loop
     static WifiCredentials* ClassCredentials; // Class variable to be able to access wifi credentials
     static bool autoReconnectFlag;
-    static std::mutex connectionStateMutex; // mutex to protect network connection vars
+    static SemaphoreHandle_t connectionSemaphore; // mutex to protect network connection vars
+    static void checkAutoConnectWifi();
 
 public:
     static std::queue<String> commandsQueue; // received commands from server

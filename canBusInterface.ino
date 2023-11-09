@@ -24,21 +24,30 @@ HSFramePoll pollingList[pollListSize];
 Command commandsList[commandsListSize];
 SemaphoreHandle_t mutex; // Mutex to control access to CANBUS
 bluetoothAdapter* BTAdapter;
+wifiAdapter* WifiAdapter;
 
 
 //WIFI info
-// const char* ssid = "OnePlus10";
-// const char* password = "2228171973";
+char* ssid = "OnePlus10";
+char* password = "2228171973";
 
 //Your Domain name with URL path or IP address with path
-const char* serverName = "http://192.168.255.150:3000/vci/getCommand";
+char* serverName = "http://192.168.255.150:3000/vci/getCommand";
 
 
 void setup() {
   Serial.begin(9600);
   Serial.println("Started");
+
   // Bluetooth Object
   BTAdapter = new bluetoothAdapter();
+
+  // Wifi object
+  WifiAdapter = new wifiAdapter(serverName);
+
+  // Default wifi network to connect to
+   WifiAdapter->connectToNetwork(ssid, password);
+  
   intializeCarState(&carState);
   intializePollingList(pollingList);
   intializeCommandsList(commandsList);
