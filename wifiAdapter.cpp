@@ -2,12 +2,15 @@
 #include <WiFi.h>
 #include <HTTPClient.h>
 
-// Initial var declarations
+// Semaphores and task handlers
 WifiCredentials* wifiAdapter::ClassCredentials = new WifiCredentials;
 TaskHandle_t wifiAdapter::connectToWifiTaskHandle = NULL;
-std::mutex wifiAdapter::commandsQueueMutex;
-std::mutex wifiAdapter::statusQueueMutex;
 SemaphoreHandle_t wifiAdapter::connectionSemaphore;
+SemaphoreHandle_t wifiAdapter::APIVarsSemaphore;
+StaticSemaphore_t wifiAdapter::connectionSemaphoreBuffer;
+StaticSemaphore_t wifiAdapter::APIVarsSemaphoreBuffer;
+
+// Initial var declarations
 unsigned long wifiAdapter::wifiConnectionstartTime;
 char* wifiAdapter::serverAddress = nullptr;
 char* wifiAdapter::VIN = nullptr;
@@ -16,7 +19,7 @@ bool wifiAdapter::connectionInProgress = false;
 bool wifiAdapter::autoReconnectFlag = false;
 std::queue<String> wifiAdapter::commandsQueue;
 std::queue<String> wifiAdapter::statusQueue;
-StaticSemaphore_t wifiAdapter::connectionSemaphoreBuffer;
+
 
 // Helper thread to connect to WiFi without blocking
 void wifiAdapter::connectToWifiTask(void* param) {
@@ -75,14 +78,14 @@ if (xSemaphoreTake(connectionSemaphore, portMAX_DELAY)) {
 
 // Helper thread to fetch from car over WiFi in the background
 void wifiAdapter::fetchCommand(void* params) {
-    const int refreshInterval = 2000; // Refresh from car every 200ms
+    const int refreshInterval = 400; // Refresh from internet every 400ms
      while (true) {
      String payload = ""; 
+     xSemaphoreTake(APIVarsSemaphore, portMAX_DELAY);
      if (wifiAdapter::isConnected && VIN != nullptr && serverAddress != nullptr) {
         if (strlen(VIN) > 0 && strlen(serverAddress) > 0) {
             WiFiClient client;
             HTTPClient http;
-
             http.begin(client, wifiAdapter::serverAddress);
             http.addHeader("Content-Type", "application/json");
             http.addHeader("set-vin", wifiAdapter::VIN);
@@ -90,7 +93,6 @@ void wifiAdapter::fetchCommand(void* params) {
 
                 if (httpResponseCode>0) {
                     //HTTP OK
-                    std::lock_guard<std::mutex> lock(commandsQueueMutex); // Using lock to ensure that data written to queue is consistent
                     payload = http.getString();
                     payload.replace("\"", "");
                     wifiAdapter::commandsQueue.push(payload);
@@ -99,6 +101,7 @@ void wifiAdapter::fetchCommand(void* params) {
             http.end();
         } 
       }
+      xSemaphoreGive(APIVarsSemaphore);
       // Check if to autoconnect back to wifi
       checkAutoConnectWifi();
       vTaskDelay(refreshInterval / portTICK_PERIOD_MS);
@@ -129,14 +132,13 @@ void wifiAdapter::checkAutoConnectWifi() {
 
 // Helper thread to send status to server in the background over WiFi
 void wifiAdapter::sendStatus(void* params) {
-    const int refreshInterval = 300; // Refresh from car every 300ms
+    const int refreshInterval = 900; // Refresh from car every 900ms
     while (true) {
+        xSemaphoreTake(APIVarsSemaphore, portMAX_DELAY);
         if (wifiAdapter::isConnected && !wifiAdapter::statusQueue.empty() && VIN != nullptr && serverAddress != nullptr) {
             if (strlen(VIN) > 0 && strlen(serverAddress) > 0) {
-                std::lock_guard<std::mutex> lock(statusQueueMutex); // Using lock to ensure that the statusQueue doesn't get modified during this operation
                 WiFiClient client;
                 HTTPClient http;
-
                 http.begin(client, wifiAdapter::serverAddress);
                 http.addHeader("Content-Type", "application/json");
                 http.addHeader("set-vin", wifiAdapter::VIN);
@@ -149,6 +151,7 @@ void wifiAdapter::sendStatus(void* params) {
                 http.end();
             }
       }
+        xSemaphoreGive(APIVarsSemaphore);
         vTaskDelay(refreshInterval / portTICK_PERIOD_MS);
     }
 }
@@ -156,8 +159,10 @@ void wifiAdapter::sendStatus(void* params) {
 // Constructor + Destructor
 wifiAdapter::wifiAdapter(char* serverAddress) {
     connectionSemaphore = xSemaphoreCreateBinaryStatic(&connectionSemaphoreBuffer);
-    xSemaphoreGive(connectionSemaphore);  // Initialize the semaphore to the "not taken" state
-
+    APIVarsSemaphore = xSemaphoreCreateBinaryStatic(&APIVarsSemaphoreBuffer);
+    // Initialize the semaphore to the "not taken" state
+    xSemaphoreGive(connectionSemaphore);  
+    xSemaphoreGive(APIVarsSemaphore);  
     // Save the serverAddress
     this->serverAddress = new char[strlen(serverAddress) + 1]; // Allocate new char in memory to hold serverAddress
     strcpy(this->serverAddress, serverAddress); // Copy string to memory
@@ -218,9 +223,9 @@ void wifiAdapter::connectToNetwork(char* ssid, char* password) {
     // if ((strcmp(ClassCredentials->ssid, ssid) != 0) && ((strcmp(ClassCredentials->password, password) != 0))) {
     //     // attempting to connect to a new network
     //     // cancel current connection and disconnect
-    //     connectionInProgress = false;
+    //     
     //     disconnectFromNetwork();
-    //     autoReconnectFlag = false;
+    //     
     // }
      // Ensure that a conncetion isn't already in progress
     if (!connectionInProgress) {
@@ -248,36 +253,48 @@ void wifiAdapter::connectToNetwork(char* ssid, char* password) {
     }
 }
 String wifiAdapter::getCommandWifi() {
-    std::lock_guard<std::mutex> lock(commandsQueueMutex); // Using lock to ensure that the status returned is correct
+    xSemaphoreTake(APIVarsSemaphore, portMAX_DELAY);
     if (!commandsQueue.empty()) {
         String command = commandsQueue.front();
         commandsQueue.pop();
+        xSemaphoreGive(APIVarsSemaphore);
         return command;
     }
+    xSemaphoreGive(APIVarsSemaphore);
     return "";
 }
 void wifiAdapter::updateState(const char* state) {
+    xSemaphoreTake(APIVarsSemaphore, portMAX_DELAY);
     String stateStr = String (state);
-    std::lock_guard<std::mutex> lock(statusQueueMutex);
     statusQueue.push(stateStr);
+    xSemaphoreGive(APIVarsSemaphore);
 }
 void wifiAdapter::disconnectFromNetwork() {
-    // std::lock_guard<std::mutex> lock(connectionStateMutex); // using mutex to ensure that isConnected gets approprialty updated
     WiFi.disconnect();
-    // Update connection result
-    isConnected = (WiFi.status() == WL_CONNECTED);
+    if (xSemaphoreTake(connectionSemaphore, portMAX_DELAY)) {
+        connectionInProgress = false;
+        autoReconnectFlag = false;
+        // Update connection result
+        isConnected = (WiFi.status() == WL_CONNECTED);
+        xSemaphoreGive(connectionSemaphore);
+    }
+ 
 }
-
 bool wifiAdapter::isDeviceConnected() {
-    // std::lock_guard<std::mutex> lock(connectionStateMutex); // using mutex to ensure that isConnected gets approprialty read
-    return isConnected;
+    bool connected = false;
+    xSemaphoreTake(connectionSemaphore, portMAX_DELAY);
+    connected = isConnected;
+    xSemaphoreGive(connectionSemaphore);
+    return connected;
 }
 // Method to set VIN
 void wifiAdapter::setVIN(char* VIN) {
     // update the VIN only if it's different
     if((this->VIN == nullptr) || (strcmp(VIN, this->VIN) != 0)) {
+        xSemaphoreTake(APIVarsSemaphore, portMAX_DELAY);
         delete[] this->VIN; // Delete the old VIN from memory
         this->VIN = new char[strlen(VIN) + 1]; // Allocate memory for the new variable
         strcpy(this->VIN, VIN); // Copy in the new VIN to memory
+        xSemaphoreGive(APIVarsSemaphore);
     }
 }

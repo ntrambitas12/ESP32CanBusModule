@@ -7,7 +7,8 @@
 #include <BLE2902.h>
 #include <queue>
 #include <string>
-#include <mutex>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
 class bluetoothAdapter {
 private:
@@ -16,7 +17,8 @@ private:
     BLECharacteristic* pCarLinkWriteCharacteristic;
     BLECharacteristic* pCarLinkReadCharacteristic;
     static std::queue<std::string> commandsQueue;
-    static std::mutex commandsQueueMutex;
+    static StaticSemaphore_t queueSemaphoreBuffer;
+    static SemaphoreHandle_t queueSemaphore; // mutex to from queue being incorrect
 
 
     class MyServerCallbacks : public BLEServerCallbacks {

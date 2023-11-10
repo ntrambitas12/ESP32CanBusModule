@@ -10,8 +10,9 @@
 
 bool bluetoothAdapter::isDeviceConnected = false;
 std::queue<std::string> bluetoothAdapter::commandsQueue;
-std::mutex bluetoothAdapter::commandsQueueMutex; 
-
+SemaphoreHandle_t bluetoothAdapter::queueSemaphore;
+StaticSemaphore_t bluetoothAdapter::queueSemaphoreBuffer;
+\
 void bluetoothAdapter::MyServerCallbacks::onConnect(BLEServer* pServer) {
     isDeviceConnected = true;
      BLEAdvertising* pAdvertising = pServer->getAdvertising();
@@ -31,8 +32,9 @@ void bluetoothAdapter::MyCharacteristicReadCallbacks::onRead(BLECharacteristic* 
 
 void bluetoothAdapter::MyCharacteristicWriteCallbacks::onWrite(BLECharacteristic* carDataCharacteristics) {
     // Callback for when the client writes data
-    std::lock_guard<std::mutex> lock(commandsQueueMutex);
+    xSemaphoreTake(queueSemaphore, portMAX_DELAY); 
     commandsQueue.push(carDataCharacteristics->getValue());
+    xSemaphoreGive(queueSemaphore); 
 }
 
 bluetoothAdapter::bluetoothAdapter() {
@@ -60,6 +62,10 @@ bluetoothAdapter::bluetoothAdapter() {
     BLEDescriptor* pCccDescriptor = new BLEDescriptor(BLEUUID((uint16_t)0x2902));
     pCarLinkReadCharacteristic->addDescriptor(pCccDescriptor);
 
+    // Intialize semaphore
+    queueSemaphore = xSemaphoreCreateBinaryStatic(&queueSemaphoreBuffer);
+    // Initialize the semaphore to the "not taken" state
+    xSemaphoreGive(queueSemaphore); 
     // Start advertising
     pService->start();
     BLEAdvertising* pAdvertising = pServer->getAdvertising();
@@ -67,12 +73,14 @@ bluetoothAdapter::bluetoothAdapter() {
 }
 
 std::string bluetoothAdapter::getCommand() {
-    std::lock_guard<std::mutex> lock(commandsQueueMutex);
+    xSemaphoreTake(queueSemaphore, portMAX_DELAY); 
     if (!commandsQueue.empty()) {
         std::string command = commandsQueue.front();
+        xSemaphoreGive(queueSemaphore); 
         commandsQueue.pop();
         return command;
     }
+    xSemaphoreGive(queueSemaphore); 
     return "";
 }
 

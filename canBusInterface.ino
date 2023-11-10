@@ -101,6 +101,7 @@ void loop() {
   // Send out the updated state via Bluetooth
   String jsonSerialized = serializeCarStateToJson(&carState);
   BTAdapter->updateState(jsonSerialized.c_str());
+  
     
 
    
