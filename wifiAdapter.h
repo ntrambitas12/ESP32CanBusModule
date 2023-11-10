@@ -24,7 +24,6 @@ private:
     static SemaphoreHandle_t APIVarsSemaphore; // mutex to protect API (VIN and serverAddress) variables
     // These fields are static so that the helper tasks can access them.
     // There shouldn't be any issues at runtime but these need to be used with caution
-    static WifiCredentials* ClassCredentials; // Class variable to be able to access wifi credentials
     static unsigned long wifiConnectionstartTime;
     static char* serverAddress;
     static char* VIN;
@@ -33,8 +32,6 @@ private:
     static void connectToWifiTask(void* param);
     static void fetchCommand(void* params);
     static void sendStatus(void* params);
-    static bool autoReconnectFlag;
-    static void checkAutoConnectWifi();
 
 public:
     static std::queue<String> commandsQueue; // received commands from server

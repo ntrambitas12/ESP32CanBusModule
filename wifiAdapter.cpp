@@ -2,8 +2,9 @@
 #include <WiFi.h>
 #include <HTTPClient.h>
 
+# define WIFI_TASK_SLEEP 5000 // Let wifi task sleep for 5 seconds before attempting to reconnect
+
 // Semaphores and task handlers
-WifiCredentials* wifiAdapter::ClassCredentials = new WifiCredentials;
 TaskHandle_t wifiAdapter::connectToWifiTaskHandle = NULL;
 SemaphoreHandle_t wifiAdapter::connectionSemaphore;
 SemaphoreHandle_t wifiAdapter::APIVarsSemaphore;
@@ -16,74 +17,60 @@ char* wifiAdapter::serverAddress = nullptr;
 char* wifiAdapter::VIN = nullptr;
 bool wifiAdapter::isConnected = false;
 bool wifiAdapter::connectionInProgress = false;
-bool wifiAdapter::autoReconnectFlag = false;
 std::queue<String> wifiAdapter::commandsQueue;
 std::queue<String> wifiAdapter::statusQueue;
 
 
 // Helper thread to connect to WiFi without blocking
 void wifiAdapter::connectToWifiTask(void* param) {
-    // testing 
+    // Tasks must be in an infinite loop, otherwise it will crash per RTOS docs: 
     while (true) {
+        // Update the state of WIFI connection
+        xSemaphoreTake(connectionSemaphore, portMAX_DELAY);
+         wifiAdapter::isConnected = (WiFi.status() == WL_CONNECTED);
+        // Method loops until wifi gets connected. Will autoreconnect to the passed in network till stopped
         if (!wifiAdapter::isConnected) {
-                xSemaphoreTake(connectionSemaphore, portMAX_DELAY);
                 //Reset deviceConnected flag to false
                 wifiAdapter::isConnected = false;
-                wifiAdapter::autoReconnectFlag = false;
-                WifiCredentials* credentials = (WifiCredentials*)param;    
+                WifiCredentials* credentials = (WifiCredentials*)param; 
+                // Verify that credentials isn't null   
                  if (credentials != nullptr && credentials->ssid != nullptr && credentials->password != nullptr) {
-                // Attempt to connect
-                wifiAdapter::connectionInProgress = true;
-                Serial.println("DEBUG: WIFI SSID: " + String(credentials->password));
-                WiFi.begin(credentials->ssid, credentials->password);
+                        // Attempt to connect
+                        wifiAdapter::connectionInProgress = true;
+                        Serial.println("DEBUG: WIFI SSID: " + String(credentials->password));
+                        WiFi.begin(credentials->ssid, credentials->password);
 
-                // Continue trying to connect for a maximum of 15 seconds
-                const unsigned long connectionTimeout = 15000;
-                while ( (!wifiAdapter::isConnected && millis() - wifiAdapter::wifiConnectionstartTime < connectionTimeout))
-                {   
-                    Serial.println("Inside the loop");
-                    xSemaphoreGive(connectionSemaphore);
-                    vTaskDelay(pdMS_TO_TICKS(5000)); // Let other threads run 
-                    xSemaphoreTake(connectionSemaphore, portMAX_DELAY);
-                    Serial.println("Semaphore taken again");
-                    Serial.println("After delay");
+                        // Continue trying to connect for a maximum of 15 seconds
+                        const unsigned long connectionTimeout = 15000;
+                        while ( (!wifiAdapter::isConnected && millis() - wifiAdapter::wifiConnectionstartTime < connectionTimeout))
+                        {   
+                            Serial.println("Inside the loop");
+                            xSemaphoreGive(connectionSemaphore);
+                            vTaskDelay(pdMS_TO_TICKS(WIFI_TASK_SLEEP)); // Let other threads run 
+                            xSemaphoreTake(connectionSemaphore, portMAX_DELAY);
+                            Serial.println("Semaphore taken again");
+                            Serial.println("After delay");
 
-                }
-                    Serial.println("Outside loop");
-                    
-                // Update connection result
-                wifiAdapter::isConnected = (WiFi.status() == WL_CONNECTED);
-                // Wifi is connected. Save the currently connected network to class credentials. This will allow for an easy reconnect
-                if (wifiAdapter::isConnected) {
-                    // strncpy(ClassCredentials->ssid, credentials->ssid, MAX_SSID_LENGTH - 1);
-                    // ClassCredentials->ssid[MAX_SSID_LENGTH - 1] = '\0';  // Null-terminate the string
-
-                    // strncpy(ClassCredentials->password, credentials->password, MAX_PASSWORD_LENGTH - 1);
-                    // ClassCredentials->password[MAX_PASSWORD_LENGTH - 1] = '\0';  // Null-terminate the string
-
-                    // wifiAdapter::autoReconnectFlag = true;
-                    //  Serial.println("DEBUG: CONNECTED ");
-                } else {
-                    wifiAdapter::connectionInProgress = false; 
-                    // const unsigned long retryTimeout = 35000;
-                    // Serial.println("DEBUG: WAITING 2 " );
-                    // xSemaphoreGive(connectionSemaphore);
-                    // vTaskDelay(pdMS_TO_TICKS(retryTimeout)); // Stop trying to connect
-                    // xSemaphoreTake(connectionSemaphore, portMAX_DELAY);
-                }
-            
-        }
-        
-        wifiAdapter::connectionInProgress = false;   
-        // Free the memory of the Credentials struct
-        // delete credentials;
+                        }
+                        Serial.println("Outside loop");
+                        // Update connection result
+                        wifiAdapter::isConnected = (WiFi.status() == WL_CONNECTED);
+                        wifiAdapter::connectionInProgress = false; 
+                        wifiConnectionstartTime = millis();
+                        Serial.println("DEBUG: FINISHED ATTEMPT TO CONNECT TO WIFI: RESULT: " + String(isConnected));
+                    } else {
+                        // Credentias param was corrupted. Exit this thread
+                        wifiAdapter::connectionInProgress = false;   
+                        Serial.println("DEBUG: EXIT CONNECT TO WIFI TASK, CORRUPTED Params ");
+                        xSemaphoreGive(connectionSemaphore);
+                        // Free the memory of the Credentials struct
+                        delete credentials;
+                        connectToWifiTaskHandle = NULL;
+                        vTaskDelete(NULL);
+                    }
+            }  
         xSemaphoreGive(connectionSemaphore);
-        vTaskDelay(pdMS_TO_TICKS(5000)); // Let other threads run 
-
-        Serial.println("DEBUG: EXIT CONNECT TO WIFI TASK ");
-
-        }
-    
+        vTaskDelay(pdMS_TO_TICKS(WIFI_TASK_SLEEP)); // Let other threads run 
     }
 
 }
@@ -114,35 +101,10 @@ void wifiAdapter::fetchCommand(void* params) {
         } 
       }
       xSemaphoreGive(APIVarsSemaphore);
-      // Check if to autoconnect back to wifi
-      checkAutoConnectWifi();
       vTaskDelay(refreshInterval / portTICK_PERIOD_MS);
   }
 }
 
-
-void wifiAdapter::checkAutoConnectWifi() {
-    // If disconnected from wifi, check if to reconnect
-     xSemaphoreTake(connectionSemaphore, portMAX_DELAY);
-     if (wifiAdapter::autoReconnectFlag && !wifiAdapter::connectionInProgress) {
-         // Delete the old connectToWifiTask if it exists
-        if (connectToWifiTaskHandle != NULL) {
-            vTaskDelete(connectToWifiTaskHandle);
-            connectToWifiTaskHandle = NULL;
-        }
-
-        // Create a new task to try to reconnect to the last known wifi network
-        xTaskCreate(
-            connectToWifiTask,
-            "ConnectToWifi",
-            1000, // Stack size in Bytes
-            (void*)ClassCredentials, // Pass a pointer to the last saved ClassCredentials
-            2, // Task priority
-            &connectToWifiTaskHandle // Task handle
-        );
-      }
-      xSemaphoreGive(connectionSemaphore);
-}
 
 // Helper thread to send status to server in the background over WiFi
 void wifiAdapter::sendStatus(void* params) {
@@ -224,24 +186,13 @@ wifiAdapter::~wifiAdapter() {
     // Deallocate memory
     delete[] this->serverAddress;
     delete[] this->VIN;
-    delete ClassCredentials;
 }
 
+// Implement public methods:
 
-
-// Implement public methods
-// This method will connect to the passed in wifi network. If already connected to the network passed in, then no further action will occur
+// This method will connect to the passed in wifi network. Calling code should call this only when wanting to change network!
 void wifiAdapter::connectToNetwork(const char* ssid, const char* password) {
-// std::lock_guard<std::mutex> lock(connectionStateMutex); 
-    // check if the new network to connect to is diffrent than the current class credentials
-    // if ((strcmp(ClassCredentials->ssid, ssid) != 0) && ((strcmp(ClassCredentials->password, password) != 0))) {
-    //     // attempting to connect to a new network
-    //     // cancel current connection and disconnect
-    //     
-    //     disconnectFromNetwork();
-    //     
-    // }
-     // Ensure that a conncetion isn't already in progress
+    // Ensure that a conncetion isn't already in progress
     if (!connectionInProgress) {
         // Record start time
         wifiConnectionstartTime = millis();
@@ -250,6 +201,8 @@ void wifiAdapter::connectToNetwork(const char* ssid, const char* password) {
         if (connectToWifiTaskHandle != NULL) {
             vTaskDelete(connectToWifiTaskHandle);
             connectToWifiTaskHandle = NULL;
+            // Attempt to disconnect from WIFI
+            disconnectFromNetwork();
         }
 
         // Allocate new credentials
@@ -260,7 +213,7 @@ void wifiAdapter::connectToNetwork(const char* ssid, const char* password) {
         xTaskCreate(
             connectToWifiTask,
             "ConnectToWifi",
-            3500, // Stack size in Bytes
+            2500, // Stack size in Bytes
             (void*)credentials, // Pass a pointer to credentials struct
             3, // Task priority
             &connectToWifiTaskHandle // Task handle
@@ -285,15 +238,14 @@ void wifiAdapter::updateState(const char* state) {
     xSemaphoreGive(APIVarsSemaphore);
 }
 void wifiAdapter::disconnectFromNetwork() {
-    WiFi.disconnect();
-    if (xSemaphoreTake(connectionSemaphore, portMAX_DELAY)) {
+    if (isDeviceConnected()) {
+        WiFi.disconnect();
+        xSemaphoreTake(connectionSemaphore, portMAX_DELAY);
         connectionInProgress = false;
-        autoReconnectFlag = false;
         // Update connection result
         isConnected = (WiFi.status() == WL_CONNECTED);
         xSemaphoreGive(connectionSemaphore);
-    }
- 
+    } 
 }
 bool wifiAdapter::isDeviceConnected() {
     bool connected = false;
