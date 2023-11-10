@@ -5,9 +5,12 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
+#define MAX_SSID_LENGTH 32
+#define MAX_PASSWORD_LENGTH 100
+
 struct WifiCredentials {
-        char* ssid;
-        char* password;
+        char ssid[MAX_SSID_LENGTH];
+        char password[MAX_PASSWORD_LENGTH];
     };
 
 class wifiAdapter {
@@ -36,9 +39,9 @@ private:
 public:
     static std::queue<String> commandsQueue; // received commands from server
     static std::queue<String> statusQueue; // status to send back to server
-    wifiAdapter(char* serverAddress);
+    wifiAdapter(const char* serverAddress);
     ~wifiAdapter();
-    void connectToNetwork(char* ssid, char* password);
+    void connectToNetwork(const char* ssid, const char* password);
     void disconnectFromNetwork();
     String getCommandWifi();
     void updateState(const char* state);

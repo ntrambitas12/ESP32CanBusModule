@@ -23,16 +23,19 @@ std::queue<String> wifiAdapter::statusQueue;
 
 // Helper thread to connect to WiFi without blocking
 void wifiAdapter::connectToWifiTask(void* param) {
-if (xSemaphoreTake(connectionSemaphore, portMAX_DELAY)) {
-        //Reset deviceConnected flag to false
-        wifiAdapter::isConnected = false;
-        wifiAdapter::autoReconnectFlag = false;
-        WifiCredentials* credentials = (WifiCredentials*)param;    
-        if (credentials != nullptr && credentials->ssid != nullptr && credentials->password != nullptr) {
+    // testing 
+    while (true) {
+        if (!wifiAdapter::isConnected) {
+                xSemaphoreTake(connectionSemaphore, portMAX_DELAY);
+                //Reset deviceConnected flag to false
+                wifiAdapter::isConnected = false;
+                wifiAdapter::autoReconnectFlag = false;
+                WifiCredentials* credentials = (WifiCredentials*)param;    
+                 if (credentials != nullptr && credentials->ssid != nullptr && credentials->password != nullptr) {
                 // Attempt to connect
                 wifiAdapter::connectionInProgress = true;
-                Serial.println("DEBUG: WIFI SSID: " + String(credentials->ssid) );
-                // WiFi.begin(credentials->ssid, credentials->password);
+                Serial.println("DEBUG: WIFI SSID: " + String(credentials->password));
+                WiFi.begin(credentials->ssid, credentials->password);
 
                 // Continue trying to connect for a maximum of 15 seconds
                 const unsigned long connectionTimeout = 15000;
@@ -52,28 +55,37 @@ if (xSemaphoreTake(connectionSemaphore, portMAX_DELAY)) {
                 wifiAdapter::isConnected = (WiFi.status() == WL_CONNECTED);
                 // Wifi is connected. Save the currently connected network to class credentials. This will allow for an easy reconnect
                 if (wifiAdapter::isConnected) {
-                    strcpy(ClassCredentials->ssid, credentials->ssid);
-                    strcpy(ClassCredentials->password, credentials->password);
-                    wifiAdapter::autoReconnectFlag = true;
+                    // strncpy(ClassCredentials->ssid, credentials->ssid, MAX_SSID_LENGTH - 1);
+                    // ClassCredentials->ssid[MAX_SSID_LENGTH - 1] = '\0';  // Null-terminate the string
+
+                    // strncpy(ClassCredentials->password, credentials->password, MAX_PASSWORD_LENGTH - 1);
+                    // ClassCredentials->password[MAX_PASSWORD_LENGTH - 1] = '\0';  // Null-terminate the string
+
+                    // wifiAdapter::autoReconnectFlag = true;
+                    //  Serial.println("DEBUG: CONNECTED ");
                 } else {
                     wifiAdapter::connectionInProgress = false; 
-                    const unsigned long retryTimeout = 35000;
-                    Serial.println("DEBUG: WAITING 2 " + String(credentials->ssid) );
-                    xSemaphoreGive(connectionSemaphore);
-                    vTaskDelay(pdMS_TO_TICKS(retryTimeout)); // Stop trying to connect
-                    xSemaphoreTake(connectionSemaphore, portMAX_DELAY);
+                    // const unsigned long retryTimeout = 35000;
+                    // Serial.println("DEBUG: WAITING 2 " );
+                    // xSemaphoreGive(connectionSemaphore);
+                    // vTaskDelay(pdMS_TO_TICKS(retryTimeout)); // Stop trying to connect
+                    // xSemaphoreTake(connectionSemaphore, portMAX_DELAY);
                 }
             
         }
         
         wifiAdapter::connectionInProgress = false;   
         // Free the memory of the Credentials struct
-        delete credentials;
+        // delete credentials;
         xSemaphoreGive(connectionSemaphore);
+        vTaskDelay(pdMS_TO_TICKS(5000)); // Let other threads run 
+
+        Serial.println("DEBUG: EXIT CONNECT TO WIFI TASK ");
+
+        }
+    
     }
-    Serial.println("DEBUG: FAILED TO CONNECT TO SSID: ");
-        vTaskDelete(connectToWifiTaskHandle); // Remove this task once its done
-        connectToWifiTaskHandle = NULL; // Set back to null to signify that this handle is no longer running
+
 }
 
 // Helper thread to fetch from car over WiFi in the background
@@ -107,6 +119,8 @@ void wifiAdapter::fetchCommand(void* params) {
       vTaskDelay(refreshInterval / portTICK_PERIOD_MS);
   }
 }
+
+
 void wifiAdapter::checkAutoConnectWifi() {
     // If disconnected from wifi, check if to reconnect
      xSemaphoreTake(connectionSemaphore, portMAX_DELAY);
@@ -157,7 +171,7 @@ void wifiAdapter::sendStatus(void* params) {
 }
 
 // Constructor + Destructor
-wifiAdapter::wifiAdapter(char* serverAddress) {
+wifiAdapter::wifiAdapter(const char* serverAddress) {
     connectionSemaphore = xSemaphoreCreateBinaryStatic(&connectionSemaphoreBuffer);
     APIVarsSemaphore = xSemaphoreCreateBinaryStatic(&APIVarsSemaphoreBuffer);
     // Initialize the semaphore to the "not taken" state
@@ -217,7 +231,7 @@ wifiAdapter::~wifiAdapter() {
 
 // Implement public methods
 // This method will connect to the passed in wifi network. If already connected to the network passed in, then no further action will occur
-void wifiAdapter::connectToNetwork(char* ssid, char* password) {
+void wifiAdapter::connectToNetwork(const char* ssid, const char* password) {
 // std::lock_guard<std::mutex> lock(connectionStateMutex); 
     // check if the new network to connect to is diffrent than the current class credentials
     // if ((strcmp(ClassCredentials->ssid, ssid) != 0) && ((strcmp(ClassCredentials->password, password) != 0))) {
@@ -240,12 +254,13 @@ void wifiAdapter::connectToNetwork(char* ssid, char* password) {
 
         // Allocate new credentials
         WifiCredentials* credentials = new WifiCredentials; 
-        credentials->ssid = ssid;
-        credentials->password = password;
+        strncpy(credentials->ssid, ssid, MAX_SSID_LENGTH);
+        strncpy(credentials->password, password, MAX_PASSWORD_LENGTH);
+
         xTaskCreate(
             connectToWifiTask,
             "ConnectToWifi",
-            1000, // Stack size in Bytes
+            3500, // Stack size in Bytes
             (void*)credentials, // Pass a pointer to credentials struct
             3, // Task priority
             &connectToWifiTaskHandle // Task handle

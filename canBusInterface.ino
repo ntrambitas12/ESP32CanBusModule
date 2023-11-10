@@ -28,8 +28,8 @@ wifiAdapter* WifiAdapter;
 
 
 //WIFI info
-char* ssid = "OnePlus10";
-char* password = "2228171973";
+const char* ssid = "OnePlus10";
+const char* password = "2228171973";
 
 //Your Domain name with URL path or IP address with path
 char* serverName = "http://192.168.255.150:3000/vci/getCommand";

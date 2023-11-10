@@ -66,7 +66,7 @@ void printData(CarState* carState) {
 
 String serializeCarStateToJson(CarState* carState) {
   // Define a JSON object
-  StaticJsonDocument<256> jsonDoc; // Adjust the size as needed
+  StaticJsonDocument<516> jsonDoc; // Adjust the size as needed
 
   // Populate the JSON object with struct values using the -> operator
   jsonDoc["chargingCurrent"] = carState->chargingCurrent;

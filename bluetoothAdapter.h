@@ -17,8 +17,11 @@ private:
     BLECharacteristic* pCarLinkWriteCharacteristic;
     BLECharacteristic* pCarLinkReadCharacteristic;
     static std::queue<std::string> commandsQueue;
+    static StaticSemaphore_t deviceConnectionSemaphoreBuffer;
+    static SemaphoreHandle_t deviceConnectionSemaphore;
     static StaticSemaphore_t queueSemaphoreBuffer;
     static SemaphoreHandle_t queueSemaphore; // mutex to from queue being incorrect
+    static int connectedDevices;
 
 
     class MyServerCallbacks : public BLEServerCallbacks {
