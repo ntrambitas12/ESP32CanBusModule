@@ -19,7 +19,6 @@ StaticSemaphore_t bluetoothAdapter::readSemaphoreBuffer;
 SemaphoreHandle_t bluetoothAdapter::deviceConnectionSemaphore;
 StaticSemaphore_t bluetoothAdapter::deviceConnectionSemaphoreBuffer;
 int bluetoothAdapter::connectedDevices = 0;
-unsigned long lastWriteTime;
 
 void bluetoothAdapter::MyServerCallbacks::onConnect(BLEServer* pServer) {
     xSemaphoreTake(deviceConnectionSemaphore, portMAX_DELAY); 
@@ -119,10 +118,8 @@ std::string bluetoothAdapter::getCommand() {
 }
 
 void bluetoothAdapter::updateState(const char* state) {
-if (millis() - lastWriteTime > WRITE_UPDATE_BREAK){
-  pCarLinkReadCharacteristic->setValue(state);
-  lastWriteTime = millis();
-  //   pCarLinkReadCharacteristic->notify();
-}
-
+    xSemaphoreTake(readSemaphore, portMAX_DELAY);
+    pCarLinkReadCharacteristic->setValue(state);
+    //   pCarLinkReadCharacteristic->notify();
+    xSemaphoreGive(readSemaphore); 
 }
