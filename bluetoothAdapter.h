@@ -9,6 +9,7 @@
 #include <string>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <freertos/timers.h>
 
 class bluetoothAdapter {
 private:
@@ -19,6 +20,8 @@ private:
     static std::queue<std::string> commandsQueue;
     static StaticSemaphore_t deviceConnectionSemaphoreBuffer;
     static SemaphoreHandle_t deviceConnectionSemaphore;
+    static StaticSemaphore_t readSemaphoreBuffer;
+    static SemaphoreHandle_t readSemaphore;
     static StaticSemaphore_t queueSemaphoreBuffer;
     static SemaphoreHandle_t queueSemaphore; // mutex to from queue being incorrect
     static int connectedDevices;

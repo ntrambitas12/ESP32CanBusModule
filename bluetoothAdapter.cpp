@@ -6,6 +6,7 @@
 #define W_SECURE_CHARACTERISTIC "cba1d466-344c-4be3-ab3f-189f80dd7518"
 #define R_CHARACTERISTIC "c8ca6af0-5c97-11ee-9b23-8b8ec8fa712a"
 #define MAX_BLE_DEVICES 1 // Support up to 1 concurrent connections ?? Dont know why data gets corrupt when multiple devices want to read carstate :(
+#define WRITE_UPDATE_BREAK 900 // pause for 300 MS
 
 #include "bluetoothAdapter.h"
 
@@ -13,17 +14,20 @@ bool bluetoothAdapter::isDeviceConnected = false;
 std::queue<std::string> bluetoothAdapter::commandsQueue;
 SemaphoreHandle_t bluetoothAdapter::queueSemaphore;
 StaticSemaphore_t bluetoothAdapter::queueSemaphoreBuffer;
+SemaphoreHandle_t bluetoothAdapter::readSemaphore;
+StaticSemaphore_t bluetoothAdapter::readSemaphoreBuffer;
 SemaphoreHandle_t bluetoothAdapter::deviceConnectionSemaphore;
 StaticSemaphore_t bluetoothAdapter::deviceConnectionSemaphoreBuffer;
 int bluetoothAdapter::connectedDevices = 0;
+unsigned long lastWriteTime;
 
 void bluetoothAdapter::MyServerCallbacks::onConnect(BLEServer* pServer) {
     xSemaphoreTake(deviceConnectionSemaphore, portMAX_DELAY); 
     isDeviceConnected = true;
     connectedDevices++; // Increment number of connected devices
     Serial.println("Device connected, #" + String(connectedDevices));
-    // BLE Automatically stops advertising whenever a device connects
-    if (connectedDevices <= MAX_BLE_DEVICES) {
+    // // BLE Automatically stops advertising whenever a device connects
+    if (connectedDevices < MAX_BLE_DEVICES) {
         BLEDevice::startAdvertising();
     }
     xSemaphoreGive(deviceConnectionSemaphore); 
@@ -38,17 +42,20 @@ void bluetoothAdapter::MyServerCallbacks::onDisconnect(BLEServer* pServer) {
         isDeviceConnected = false;
     }
     //If not advertizing and under MAX BLE threshold, start advertizing again
-    if (connectedDevices <= MAX_BLE_DEVICES) {
+    if (connectedDevices < MAX_BLE_DEVICES) {
         BLEAdvertising* pAdvertising = pServer->getAdvertising();
         pAdvertising->start();
     }
     xSemaphoreGive(deviceConnectionSemaphore); 
-
 }
 
 void bluetoothAdapter::MyCharacteristicReadCallbacks::onRead(BLECharacteristic* carDataCharacteristics) {
+    //BUG: Issues with mutliple characterisitcs read
     // Callback for when the client requests to read data
-   
+    xSemaphoreTake(readSemaphore, portMAX_DELAY);
+    //  std::string value = carDataCharacteristics->getValue();
+    // Serial.println("Attempted read callback" + String(value.c_str()));
+    xSemaphoreGive(readSemaphore);  // allow the next device to read
 }
 
 void bluetoothAdapter::MyCharacteristicWriteCallbacks::onWrite(BLECharacteristic* carDataCharacteristics) {
@@ -88,9 +95,11 @@ bluetoothAdapter::bluetoothAdapter() {
     // Intialize semaphore
     queueSemaphore = xSemaphoreCreateBinaryStatic(&queueSemaphoreBuffer);
     deviceConnectionSemaphore = xSemaphoreCreateBinaryStatic(&deviceConnectionSemaphoreBuffer);
+    readSemaphore = xSemaphoreCreateBinaryStatic(&readSemaphoreBuffer);
     // Initialize the semaphore to the "not taken" state
     xSemaphoreGive(queueSemaphore); 
     xSemaphoreGive(deviceConnectionSemaphore);
+    xSemaphoreGive(readSemaphore);
     // Start advertising
     pService->start();
     BLEAdvertising* pAdvertising = pServer->getAdvertising();
@@ -110,6 +119,10 @@ std::string bluetoothAdapter::getCommand() {
 }
 
 void bluetoothAdapter::updateState(const char* state) {
-  pCarLinkReadCharacteristic->setValue((uint8_t*)state, strlen(state));
-  pCarLinkReadCharacteristic->notify();
+if (millis() - lastWriteTime > WRITE_UPDATE_BREAK){
+  pCarLinkReadCharacteristic->setValue(state);
+  lastWriteTime = millis();
+  //   pCarLinkReadCharacteristic->notify();
+}
+
 }

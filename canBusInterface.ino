@@ -97,12 +97,13 @@ void loop() {
     Serial.println(BTcommand.c_str());
     sendCommand(BTcommand.c_str());
     }
+  
 
+  // Serial.println(carState.fuelRange);
   // Send out the updated state via Bluetooth
   String jsonSerialized = serializeCarStateToJson(&carState);
   BTAdapter->updateState(jsonSerialized.c_str());
-  
-    
+
 
    
 }
