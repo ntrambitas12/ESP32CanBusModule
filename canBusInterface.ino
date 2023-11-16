@@ -32,7 +32,7 @@ const char* ssid = "OnePlus10";
 const char* password = "2228171973";
 
 //Your Domain name with URL path or IP address with path
-char* serverName = "http://192.168.255.150:3000/vci/getCommand";
+char* serverName = "http://192.168.1.196:3000/vci";
 
 
 void setup() {
@@ -84,6 +84,7 @@ void setup() {
 
 void loop() {
   // Main thread of execution. Write code here to ping server, send user requests to car, and update state
+  //  WifiAdapter->setVIN(carState.VIN);
   if (Serial.available()) {
     String command = Serial.readString();
     sendCommand(command.c_str());
@@ -94,18 +95,27 @@ void loop() {
   std::string BTcommand = BTAdapter->getCommand();
   if (BTcommand.length() > 0) {
     // Do something with the command...
+    Serial.print("BT COMMAND: ");
     Serial.println(BTcommand.c_str());
     sendCommand(BTcommand.c_str());
     }
   
+  // Check if any command was received via the Internet
+  String command = WifiAdapter->getCommandWifi();
+  if (command.length() > 0) {
+    Serial.print("WIFI COMMAND: ");
+    Serial.println(command.c_str());
+    sendCommand(command.c_str());
+  }
 
-  // Serial.println(carState.fuelRange);
+  
   // Send out the updated state via Bluetooth
   String jsonSerialized = serializeCarStateToJson(&carState);
   BTAdapter->updateState(jsonSerialized.c_str());
 
-
-   
+  // Send out updated state via Wifi
+  WifiAdapter->updateState(jsonSerialized.c_str());
+  WifiAdapter->setVIN(carState.VIN);
 }
 
 /* Helper Functions */
@@ -134,6 +144,7 @@ void incomingCAN(void * parameter) {
       struct can_frame canMsg;
       if (hsbus.readMessage(&canMsg)  == MCP2515::ERROR_OK) {
         proccessHSCAN(&carState, &canMsg);
+        Serial.print("Incoming HS");
       }
       if (lsbus.readMessage(&canMsg)  == MCP2515::ERROR_OK) {
         proccessLSCAN(&carState, &canMsg);

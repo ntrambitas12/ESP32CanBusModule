@@ -7,6 +7,7 @@
 
 #define MAX_SSID_LENGTH 32
 #define MAX_PASSWORD_LENGTH 100
+#define MAX_WRITE_BUFF_SIZE 5000
 
 struct WifiCredentials {
         char ssid[MAX_SSID_LENGTH];
@@ -27,15 +28,16 @@ private:
     static unsigned long wifiConnectionstartTime;
     static char* serverAddress;
     static char* VIN;
+    static char writeBuffer[MAX_WRITE_BUFF_SIZE]; // buffer to update status of car
     static bool isConnected;
     static bool connectionInProgress;
     static void connectToWifiTask(void* param);
     static void fetchCommand(void* params);
     static void sendStatus(void* params);
 
+
 public:
-    static std::queue<String> commandsQueue; // received commands from server
-    static std::queue<String> statusQueue; // status to send back to server
+    static std::queue<std::string> commandsQueue; // received commands from server
     wifiAdapter(const char* serverAddress);
     ~wifiAdapter();
     void connectToNetwork(const char* ssid, const char* password);

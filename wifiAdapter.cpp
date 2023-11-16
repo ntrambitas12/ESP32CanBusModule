@@ -2,7 +2,8 @@
 #include <WiFi.h>
 #include <HTTPClient.h>
 
-# define WIFI_TASK_SLEEP 5000 // Let wifi task sleep for 5 seconds before attempting to reconnect
+#define WIFI_TASK_SLEEP 5000 // Let wifi task sleep for 5 seconds before attempting to reconnect
+#define VIN_LEN 18
 
 // Semaphores and task handlers
 TaskHandle_t wifiAdapter::connectToWifiTaskHandle = NULL;
@@ -17,9 +18,8 @@ char* wifiAdapter::serverAddress = nullptr;
 char* wifiAdapter::VIN = nullptr;
 bool wifiAdapter::isConnected = false;
 bool wifiAdapter::connectionInProgress = false;
-std::queue<String> wifiAdapter::commandsQueue;
-std::queue<String> wifiAdapter::statusQueue;
-
+char wifiAdapter::writeBuffer[MAX_WRITE_BUFF_SIZE] = {'\0'}; // Initialize writeBuffer to empty string
+std::queue<std::string> wifiAdapter::commandsQueue;
 
 // Helper thread to connect to WiFi without blocking
 void wifiAdapter::connectToWifiTask(void* param) {
@@ -44,15 +44,10 @@ void wifiAdapter::connectToWifiTask(void* param) {
                         const unsigned long connectionTimeout = 15000;
                         while ( (!wifiAdapter::isConnected && millis() - wifiAdapter::wifiConnectionstartTime < connectionTimeout))
                         {   
-                            Serial.println("Inside the loop");
                             xSemaphoreGive(connectionSemaphore);
                             vTaskDelay(pdMS_TO_TICKS(WIFI_TASK_SLEEP)); // Let other threads run 
                             xSemaphoreTake(connectionSemaphore, portMAX_DELAY);
-                            Serial.println("Semaphore taken again");
-                            Serial.println("After delay");
-
                         }
-                        Serial.println("Outside loop");
                         // Update connection result
                         wifiAdapter::isConnected = (WiFi.status() == WL_CONNECTED);
                         wifiAdapter::connectionInProgress = false; 
@@ -81,20 +76,25 @@ void wifiAdapter::fetchCommand(void* params) {
      while (true) {
      String payload = ""; 
      xSemaphoreTake(APIVarsSemaphore, portMAX_DELAY);
-     if (wifiAdapter::isConnected && VIN != nullptr && serverAddress != nullptr) {
+     if (wifiAdapter::isConnected == true && VIN != nullptr && serverAddress != nullptr) {
         if (strlen(VIN) > 0 && strlen(serverAddress) > 0) {
+          // Set up HTTP request
             WiFiClient client;
             HTTPClient http;
-            http.begin(client, wifiAdapter::serverAddress);
+            String fetchCommand = String(wifiAdapter::serverAddress) + "/getCommand";
+            http.begin(client, fetchCommand);
             http.addHeader("Content-Type", "application/json");
             http.addHeader("set-vin", wifiAdapter::VIN);
             int httpResponseCode = http.GET();
-
+              // If successful, write payload
                 if (httpResponseCode>0) {
                     //HTTP OK
                     payload = http.getString();
                     payload.replace("\"", "");
-                    wifiAdapter::commandsQueue.push(payload);
+                    // Ensure that response is not empty
+                    if (payload.length() > 0) {
+                      wifiAdapter::commandsQueue.push(std::string(payload.c_str()));
+                    }
                 }
             // Free resources
             http.end();
@@ -111,17 +111,18 @@ void wifiAdapter::sendStatus(void* params) {
     const int refreshInterval = 900; // Refresh from car every 900ms
     while (true) {
         xSemaphoreTake(APIVarsSemaphore, portMAX_DELAY);
-        if (wifiAdapter::isConnected && !wifiAdapter::statusQueue.empty() && VIN != nullptr && serverAddress != nullptr) {
+        if (wifiAdapter::isConnected && strlen(writeBuffer) > 0 && VIN != nullptr && serverAddress != nullptr) {
             if (strlen(VIN) > 0 && strlen(serverAddress) > 0) {
                 WiFiClient client;
                 HTTPClient http;
-                http.begin(client, wifiAdapter::serverAddress);
+                String putCommand = String(wifiAdapter::serverAddress) + "/putStatus";
+                http.begin(client, putCommand);
                 http.addHeader("Content-Type", "application/json");
                 http.addHeader("set-vin", wifiAdapter::VIN);
-                int httpResponseCode = http.POST(wifiAdapter::statusQueue.front());
+                int httpResponseCode = http.PUT((uint8_t*)writeBuffer, strlen(writeBuffer));
                 if (httpResponseCode>0) {
                     //HTTP OK
-                    wifiAdapter::statusQueue.pop();
+                    // Take any actions needed after sending
                 }
                 // Free resources
                 http.end();
@@ -142,6 +143,7 @@ wifiAdapter::wifiAdapter(const char* serverAddress) {
     // Save the serverAddress
     this->serverAddress = new char[strlen(serverAddress) + 1]; // Allocate new char in memory to hold serverAddress
     strcpy(this->serverAddress, serverAddress); // Copy string to memory
+    this->VIN = new char[VIN_LEN]; // Allocate memory for the new variable
     // Construct private vars
     isConnected = false;
     connectionInProgress = false;
@@ -150,7 +152,7 @@ wifiAdapter::wifiAdapter(const char* serverAddress) {
     xTaskCreate(
             fetchCommand,
             "fetchCommand",
-            1000, // Stack size in Bytes
+            4000, // Stack size in Bytes
             NULL, // No pointer to pass
             1, // Task priority
             &fetchCommandHandle // Task handle
@@ -158,9 +160,9 @@ wifiAdapter::wifiAdapter(const char* serverAddress) {
     xTaskCreate(
             sendStatus,
             "sendStatus",
-            1000, // Stack size in Bytes
+            9000, // Stack size in Bytes, made bigger to handle largest payload
             NULL, // No pointer to pass
-            1, // Task priority
+            2, // Task priority
             &sendStatusHandle // Task handle
         );
 }
@@ -223,19 +225,21 @@ void wifiAdapter::connectToNetwork(const char* ssid, const char* password) {
 String wifiAdapter::getCommandWifi() {
     xSemaphoreTake(APIVarsSemaphore, portMAX_DELAY);
     if (!commandsQueue.empty()) {
-        String command = commandsQueue.front();
+        std::string command = commandsQueue.front();
         commandsQueue.pop();
         xSemaphoreGive(APIVarsSemaphore);
-        return command;
+        return String(command.c_str());
     }
     xSemaphoreGive(APIVarsSemaphore);
     return "";
 }
-void wifiAdapter::updateState(const char* state) {
-    xSemaphoreTake(APIVarsSemaphore, portMAX_DELAY);
-    String stateStr = String (state);
-    statusQueue.push(stateStr);
-    xSemaphoreGive(APIVarsSemaphore);
+void wifiAdapter::updateState(const char* state) { 
+    // Ensure that passed in state is less than MAX buffer size and that strings arent equal
+    if (strlen(state) < MAX_WRITE_BUFF_SIZE && strcmp(state, writeBuffer) != 0) {
+      xSemaphoreTake(APIVarsSemaphore, portMAX_DELAY);
+      strcpy(writeBuffer, state); // Copy state into the write buffer
+      xSemaphoreGive(APIVarsSemaphore);
+    }
 }
 void wifiAdapter::disconnectFromNetwork() {
     if (isDeviceConnected()) {
@@ -259,9 +263,8 @@ void wifiAdapter::setVIN(char* VIN) {
     // update the VIN only if it's different
     if((this->VIN == nullptr) || (strcmp(VIN, this->VIN) != 0)) {
         xSemaphoreTake(APIVarsSemaphore, portMAX_DELAY);
-        delete[] this->VIN; // Delete the old VIN from memory
-        this->VIN = new char[strlen(VIN) + 1]; // Allocate memory for the new variable
         strcpy(this->VIN, VIN); // Copy in the new VIN to memory
         xSemaphoreGive(APIVarsSemaphore);
+        Serial.println("VIN SET");
     }
 }

@@ -97,7 +97,7 @@ void intializeCarState(CarState* carState) {
     carState->chargingCurrent = 0;
     carState->fuelRange = 0;
     strcpy(carState->transmissionRange, "");
-    strcpy(carState->VIN, "TestVIN123");
+    strcpy(carState->VIN, "TESTVIN123");
     carState->coolantTemp = 0;
     carState->chargingVoltage = 0;
     carState->batteryChargePercent = 0;
